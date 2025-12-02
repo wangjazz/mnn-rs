@@ -1,3 +1,4 @@
 [submodule "mnn-sys/vendor"]
 	path = mnn-sys/vendor
-	url = https://github.com/alibaba/mnn
+	url = https://github.com/wangjazz/MNN
+	branch = fix-gru-empty-sequence-lens
