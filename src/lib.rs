@@ -72,6 +72,8 @@ pub mod backend;
 pub mod error;
 /// MNN::Interpreter related items
 pub mod interpreter;
+/// MNN::Express::Module related items for models with subgraphs
+pub mod module;
 /// Schedule configuration
 pub mod schedule;
 /// MNN::Session related items
