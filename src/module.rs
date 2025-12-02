@@ -227,6 +227,14 @@ pub struct Module {
 }
 
 impl Module {
+    /// Load a module from file with auto-detection of input/output names
+    ///
+    /// When input_names and output_names are empty, MNN will automatically
+    /// detect them from the model file.
+    pub fn load_auto<P: AsRef<Path>>(path: P, config: Option<&ModuleConfig>) -> Result<Self> {
+        Self::load(path, &[], &[], config)
+    }
+
     /// Load a module from file
     pub fn load<P: AsRef<Path>>(
         path: P,
@@ -264,12 +272,24 @@ impl Module {
             numThreads: c.num_threads,
         });
 
+        // Allow null pointers for empty name lists
+        let input_ptr = if input_ptrs.is_empty() {
+            std::ptr::null_mut()
+        } else {
+            input_ptrs.as_mut_ptr()
+        };
+        let output_ptr = if output_ptrs.is_empty() {
+            std::ptr::null_mut()
+        } else {
+            output_ptrs.as_mut_ptr()
+        };
+
         let ptr = unsafe {
             mnn_sys::Module_loadFromFile(
                 c_path.as_ptr(),
-                input_ptrs.as_mut_ptr(),
+                input_ptr,
                 input_ptrs.len(),
-                output_ptrs.as_mut_ptr(),
+                output_ptr,
                 output_ptrs.len(),
                 c_config
                     .as_ref()
@@ -284,11 +304,43 @@ impl Module {
             format!("Failed to load module from file: {}", path.display())
         );
 
+        // Get the actual input/output names from the module info
+        let module_info = unsafe { mnn_sys::Module_getInfo(ptr) };
+        let (actual_input_names, actual_output_names) = if !module_info.is_null() {
+            let info = unsafe { &*module_info };
+            let inputs = Self::extract_names(info.inputNames, info.inputCount);
+            let outputs = Self::extract_names(info.outputNames, info.outputCount);
+            (inputs, outputs)
+        } else {
+            (
+                input_names.iter().map(|s| s.to_string()).collect(),
+                output_names.iter().map(|s| s.to_string()).collect(),
+            )
+        };
+
         Ok(Self {
             inner: NonNull::new(ptr).unwrap(),
-            input_names: input_names.iter().map(|s| s.to_string()).collect(),
-            output_names: output_names.iter().map(|s| s.to_string()).collect(),
+            input_names: actual_input_names,
+            output_names: actual_output_names,
         })
+    }
+
+    /// Extract string vector from C string array
+    fn extract_names(names: *const *const i8, count: usize) -> Vec<String> {
+        if names.is_null() || count == 0 {
+            return Vec::new();
+        }
+        (0..count)
+            .filter_map(|i| {
+                let ptr = unsafe { *names.add(i) };
+                if ptr.is_null() {
+                    None
+                } else {
+                    let cstr = unsafe { std::ffi::CStr::from_ptr(ptr) };
+                    cstr.to_str().ok().map(|s| s.to_string())
+                }
+            })
+            .collect()
     }
 
     /// Load a module from buffer

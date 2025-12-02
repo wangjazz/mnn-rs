@@ -49,24 +49,32 @@ Module* Module_loadFromFile(const char* fileName,
                             const char** inputNames, size_t inputCount,
                             const char** outputNames, size_t outputCount,
                             const ModuleConfig* config) {
-    if (!fileName || !inputNames || !outputNames) {
+    if (!fileName) {
         return nullptr;
     }
 
     std::vector<std::string> inputs;
     std::vector<std::string> outputs;
 
-    for (size_t i = 0; i < inputCount; i++) {
-        if (inputNames[i]) {
-            inputs.push_back(inputNames[i]);
+    // Allow empty input/output names - MNN will auto-detect from model
+    if (inputNames) {
+        for (size_t i = 0; i < inputCount; i++) {
+            if (inputNames[i]) {
+                inputs.push_back(inputNames[i]);
+            }
         }
     }
 
-    for (size_t i = 0; i < outputCount; i++) {
-        if (outputNames[i]) {
-            outputs.push_back(outputNames[i]);
+    if (outputNames) {
+        for (size_t i = 0; i < outputCount; i++) {
+            if (outputNames[i]) {
+                outputs.push_back(outputNames[i]);
+            }
         }
     }
+
+    fprintf(stderr, "[MNN Module] Loading from file: %s\n", fileName);
+    fprintf(stderr, "[MNN Module] Requested inputs: %zu, outputs: %zu\n", inputs.size(), outputs.size());
 
     MNNExpress::Module::Config moduleConfig;
     if (config) {
@@ -77,13 +85,42 @@ Module* Module_loadFromFile(const char* fileName,
 
     auto mnnModule = MNNExpress::Module::load(inputs, outputs, fileName, &moduleConfig);
     if (!mnnModule) {
+        fprintf(stderr, "[MNN Module] Failed to load module\n");
         return nullptr;
     }
 
     MnnModuleWrapper* wrapper = new MnnModuleWrapper();
     wrapper->module.reset(mnnModule);
-    wrapper->inputNames = inputs;
-    wrapper->outputNames = outputs;
+
+    // Get actual input/output names from the loaded module (may be auto-detected)
+    auto moduleInfo = mnnModule->getInfo();
+    if (moduleInfo) {
+        wrapper->inputNames = moduleInfo->inputNames;
+        wrapper->outputNames = moduleInfo->outputNames;
+        fprintf(stderr, "[MNN Module] Model detected inputs: %zu, outputs: %zu\n",
+                wrapper->inputNames.size(), wrapper->outputNames.size());
+        fprintf(stderr, "[MNN Module] Default format: %s\n",
+                moduleInfo->defaultFormat == MNNExpress::NCHW ? "NCHW" : "NHWC");
+
+        // Print detailed input info
+        for (size_t i = 0; i < moduleInfo->inputs.size() && i < wrapper->inputNames.size(); i++) {
+            auto& info = moduleInfo->inputs[i];
+            fprintf(stderr, "  input[%zu]: %s, dims=[", i, wrapper->inputNames[i].c_str());
+            for (size_t d = 0; d < info.dim.size(); d++) {
+                fprintf(stderr, "%d%s", info.dim[d], d + 1 < info.dim.size() ? "," : "");
+            }
+            fprintf(stderr, "], type.code=%d, type.bits=%d\n",
+                    info.type.code, info.type.bits);
+        }
+        for (size_t i = 0; i < wrapper->outputNames.size(); i++) {
+            fprintf(stderr, "  output[%zu]: %s\n", i, wrapper->outputNames[i].c_str());
+        }
+    } else {
+        // Fallback to provided names
+        wrapper->inputNames = inputs;
+        wrapper->outputNames = outputs;
+        fprintf(stderr, "[MNN Module] Warning: no module info available, using provided names\n");
+    }
 
     // Setup name pointers for C API
     for (const auto& name : wrapper->inputNames) {
@@ -105,24 +142,32 @@ Module* Module_loadFromBuffer(const void* buffer, size_t length,
                               const char** inputNames, size_t inputCount,
                               const char** outputNames, size_t outputCount,
                               const ModuleConfig* config) {
-    if (!buffer || length == 0 || !inputNames || !outputNames) {
+    if (!buffer || length == 0) {
         return nullptr;
     }
 
     std::vector<std::string> inputs;
     std::vector<std::string> outputs;
 
-    for (size_t i = 0; i < inputCount; i++) {
-        if (inputNames[i]) {
-            inputs.push_back(inputNames[i]);
+    // Allow empty input/output names - MNN will auto-detect from model
+    if (inputNames) {
+        for (size_t i = 0; i < inputCount; i++) {
+            if (inputNames[i]) {
+                inputs.push_back(inputNames[i]);
+            }
         }
     }
 
-    for (size_t i = 0; i < outputCount; i++) {
-        if (outputNames[i]) {
-            outputs.push_back(outputNames[i]);
+    if (outputNames) {
+        for (size_t i = 0; i < outputCount; i++) {
+            if (outputNames[i]) {
+                outputs.push_back(outputNames[i]);
+            }
         }
     }
+
+    fprintf(stderr, "[MNN Module] Loading from buffer (%zu bytes)\n", length);
+    fprintf(stderr, "[MNN Module] Requested inputs: %zu, outputs: %zu\n", inputs.size(), outputs.size());
 
     MNNExpress::Module::Config moduleConfig;
     if (config) {
@@ -135,13 +180,26 @@ Module* Module_loadFromBuffer(const void* buffer, size_t length,
                                               static_cast<const uint8_t*>(buffer),
                                               length, &moduleConfig);
     if (!mnnModule) {
+        fprintf(stderr, "[MNN Module] Failed to load module from buffer\n");
         return nullptr;
     }
 
     MnnModuleWrapper* wrapper = new MnnModuleWrapper();
     wrapper->module.reset(mnnModule);
-    wrapper->inputNames = inputs;
-    wrapper->outputNames = outputs;
+
+    // Get actual input/output names from the loaded module (may be auto-detected)
+    auto moduleInfo = mnnModule->getInfo();
+    if (moduleInfo) {
+        wrapper->inputNames = moduleInfo->inputNames;
+        wrapper->outputNames = moduleInfo->outputNames;
+        fprintf(stderr, "[MNN Module] Model detected inputs: %zu, outputs: %zu\n",
+                wrapper->inputNames.size(), wrapper->outputNames.size());
+    } else {
+        // Fallback to provided names
+        wrapper->inputNames = inputs;
+        wrapper->outputNames = outputs;
+        fprintf(stderr, "[MNN Module] Warning: no module info available, using provided names\n");
+    }
 
     // Setup name pointers for C API
     for (const auto& name : wrapper->inputNames) {
@@ -341,9 +399,22 @@ int Module_forward(Module* module,
         }
     }
 
-    fprintf(stderr, "[MNN Module] Running forward...\n");
+    fprintf(stderr, "[MNN Module] Running forward with %zu inputs...\n", inputVars.size());
+
     auto outputVars = wrapper->module->onForward(inputVars);
     fprintf(stderr, "[MNN Module] Forward returned %zu outputs\n", outputVars.size());
+
+    // Print output details if available
+    for (size_t i = 0; i < outputVars.size(); i++) {
+        auto info = outputVars[i]->getInfo();
+        if (info) {
+            fprintf(stderr, "  output[%zu]: dims=[", i);
+            for (size_t d = 0; d < info->dim.size(); d++) {
+                fprintf(stderr, "%d%s", info->dim[d], d + 1 < info->dim.size() ? "," : "");
+            }
+            fprintf(stderr, "], size=%d\n", info->size);
+        }
+    }
 
     // Return actual output count as negative if mismatch (for debugging)
     // -2 means no outputs, -3 means too few, -4 means too many
