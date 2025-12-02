@@ -231,11 +231,18 @@ const ModuleInfo* Module_getInfo(const Module* module) {
 }
 
 VARP* VARP_create(const int* dims, size_t dimCount, int dataType) {
-    if (!dims || dimCount == 0) {
+    // Allow dimCount == 0 for creating scalar VARP (dims=[])
+    // Only reject if dims is null AND dimCount > 0
+    if (!dims && dimCount > 0) {
         return nullptr;
     }
 
-    std::vector<int> shape(dims, dims + dimCount);
+    // For scalar: dimCount == 0 => shape = {}
+    std::vector<int> shape;
+    if (dims && dimCount > 0) {
+        shape.assign(dims, dims + dimCount);
+    }
+    // else: shape remains empty for scalar
 
     halide_type_t type;
     switch (dataType) {

@@ -113,6 +113,16 @@ impl Varp {
         Self::new(dims, 2) // 2 = int64
     }
 
+    /// Create a new scalar int32 VARP (dims=[])
+    pub fn new_scalar_i32() -> Result<Self> {
+        Self::new(&[], 1) // 1 = int32, empty dims = scalar
+    }
+
+    /// Create a new scalar float32 VARP (dims=[])
+    pub fn new_scalar_f32() -> Result<Self> {
+        Self::new(&[], 0) // 0 = float32, empty dims = scalar
+    }
+
     fn new(dims: &[i32], data_type: i32) -> Result<Self> {
         let ptr = unsafe { mnn_sys::VARP_create(dims.as_ptr(), dims.len(), data_type) };
 
